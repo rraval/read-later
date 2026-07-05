@@ -8,7 +8,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "queue:create": "wrangler queues create read-later",
-    "token": "node scripts/get-refresh-token.mjs"
+    "token": "node scripts/get-refresh-token.mjs",
+    "folder": "node scripts/create-folder.mjs"
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7"

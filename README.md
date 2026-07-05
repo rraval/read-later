@@ -50,13 +50,26 @@ npx wrangler queues create read-later
    GOOGLE_CLIENT_ID=xxx GOOGLE_CLIENT_SECRET=yyy npm run token
    ```
    Open the printed URL, approve, copy the refresh token.
-4. Destination folder ID: open `Supernote/Document/ReadLater` (create it if
-   needed) in the Drive web UI and copy the ID from the URL
-   `https://drive.google.com/drive/folders/<THIS_IS_THE_ID>`.
+4. Create the destination folder. The token above uses the least-privilege
+   `drive.file` scope, which only lets the app touch files/folders it creates
+   itself — so the app must create the destination folder, not you by hand (a
+   hand-made folder is invisible to the app and uploads into it 404). Run:
+   ```sh
+   GOOGLE_CLIENT_ID=xxx GOOGLE_CLIENT_SECRET=yyy GOOGLE_REFRESH_TOKEN=zzz \
+     npm run folder            # or: npm run folder -- "My Folder Name"
+   ```
+   Copy the folder ID it prints — that is your `DRIVE_FOLDER_ID`.
+5. Move the new folder (created at My Drive root) into the location your device
+   syncs, e.g. `Supernote/Document/`, using the Drive web UI. Moving it keeps the
+   app's access, so uploads keep working. The Supernote then picks up new EPUBs on
+   its next Drive sync.
 
-Scope note: the token script defaults to `drive.file` (least privilege). If
-uploads fail with a 403/404 on the parent folder, re-run with
-`GOOGLE_SCOPE=https://www.googleapis.com/auth/drive`.
+Alternative (skip steps 4–5): if you would rather point at a folder you made by
+hand, re-run the token step with the full-access scope
+`GOOGLE_SCOPE=https://www.googleapis.com/auth/drive npm run token`, then copy that
+folder's ID straight from its Drive URL
+`https://drive.google.com/drive/folders/<THIS_IS_THE_ID>`. Simpler, but grants the
+app your whole Drive instead of just its own files.
 
 ### 2. Secrets
 
