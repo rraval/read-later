@@ -20,7 +20,8 @@ per-run container billing). This design is not free-tier eligible.
 
 ## Components
 
-- `src/index.js` — Worker: Basic auth, UI, `/enqueue`, `/jobs`, queue and
+- `src/index.js` — Worker: cookie-session auth + `/login`, UI, `/enqueue`,
+  `/jobs`, queue and
   dead-letter consumers, the `Archiver` container class (the URL → document
   converter), and the `JobStore` DO (per-URL job status).
 - `src/ui.js` — enqueue page + bookmarklet.
@@ -50,9 +51,8 @@ create step: `wrangler deploy` provisions it.
 Secrets live in one gitignored `.env` file that you build up over the steps below.
 The same file serves three consumers: `.envrc` loads it for the setup scripts,
 `wrangler dev` reads it for local runs, and `wrangler secret bulk .env` uploads it
-to the deployed Worker. `BASIC_USER` is a plain var in `wrangler.toml`, so it stays
-out of `.env`. direnv reloads `.env` automatically when it changes; run `direnv
-reload` if a script reports a missing variable.
+to the deployed Worker. direnv reloads `.env` automatically when it changes; run
+`direnv reload` if a script reports a missing variable.
 
 ### 1. Google Drive access
 
@@ -100,17 +100,24 @@ but grants the app your whole Drive instead of just its own files.
 
 ### 2. Secrets
 
-Add the final value to `.env`, an ASCII-only Basic-auth password (the auth check
-encodes it with `btoa`, which throws on non-Latin1 characters):
+Add two auth values to `.env`: `LOGIN_PASSWORD`, the password you type on the
+`/login` page, and `SESSION_SECRET`, a random token stored in the session cookie
+(rotating it logs every session out). Generate the secret with:
+
+```sh
+openssl rand -hex 32
+```
 
 ```
-BASIC_PASS="..."
+LOGIN_PASSWORD="..."
+SESSION_SECRET="..."
 ```
 
-`.env` now holds all five secrets:
+`.env` now holds all six secrets:
 
 ```
-BASIC_PASS="..."
+LOGIN_PASSWORD="..."
+SESSION_SECRET="..."
 GOOGLE_CLIENT_ID="..."
 GOOGLE_CLIENT_SECRET="..."
 GOOGLE_REFRESH_TOKEN="..."
@@ -124,8 +131,7 @@ Upload them to the deployed Worker in one shot (or set them individually with
 npx wrangler secret bulk .env
 ```
 
-`wrangler dev` loads the same `.env` automatically for local runs. `BASIC_USER`
-defaults to `read` in `wrangler.toml`.
+`wrangler dev` loads the same `.env` automatically for local runs.
 
 ### 3. Deploy
 
@@ -133,14 +139,8 @@ defaults to `read` in `wrangler.toml`.
 npm run deploy   # builds the Docker image, pushes it, deploys the Worker
 ```
 
-Open `https://<your-worker>.workers.dev/`, log in with `read` / your
-`BASIC_PASS`. Use the form or drag the bookmarklet to your bookmarks bar.
-
-## iOS Share Sheet
-
-Shortcut: Receive URLs → Get Contents of URL, POST, JSON body
-`{ "url": <Shortcut Input> }`, header `Authorization: Basic <base64>` where the
-base64 is `echo -n 'read:YOURPASS' | base64`.
+Open `https://<your-worker>.workers.dev/`, log in with your `LOGIN_PASSWORD`. Use
+the form or drag the bookmarklet to your bookmarks bar.
 
 ## Verify on first deploy
 
@@ -158,9 +158,10 @@ Things I could not test without a live deploy; check these once:
 - The page is a live dashboard: a form plus an auto-polling list of recent jobs
   (`/jobs`) showing each as working, done, skipped, or failed. Polling speeds up
   while a job is converting, slows when idle, and pauses when the tab is hidden.
-- The bookmarklet opens that dashboard in a new tab and enqueues in the same
-  click, so sends from any site get the same visual feedback. The enqueue rides
-  its own authenticated fetch, so it succeeds even if the new tab has to re-auth.
+- The bookmarklet opens that dashboard in a new tab with the URL pre-filled into
+  the form; you click Send to enqueue (a same-origin POST), and the list refreshes
+  in place, so the job is visible with no manual refresh. Requiring the explicit
+  click keeps the enqueue CSRF-safe (there is no side-effecting GET).
 - Job state lives in the `JobStore` Durable Object and self-expires after a week.
 - Conversions that fail every retry land on `read-later-dlq` and are recorded as
   `failed` (with the URL) rather than being silently deleted, so you can re-send.
@@ -169,6 +170,9 @@ Things I could not test without a live deploy; check these once:
 
 - Paywalled or aggressively JS-gated sites may extract poorly; these are recorded
   as `dropped` (permanent) so the dashboard tells you rather than retrying forever.
-- Opening the dashboard tab relies on the browser having cached your Basic-auth
-  credentials for the Worker origin; if not, the new tab prompts once (the article
-  is already queued regardless).
+- A logged-out bookmarklet click routes through `/login` first; the URL is
+  preserved in the `next` parameter, so after logging in you land on the pre-filled
+  form and can Send as usual.
+- In local `wrangler dev`, open the app on `localhost` or `127.0.0.1`. The session
+  cookie is `Secure` (and `__Host-` prefixed); browsers drop such cookies on other
+  http hostnames (a LAN IP, a custom name), which shows up as a login loop.

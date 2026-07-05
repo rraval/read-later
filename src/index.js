@@ -1,6 +1,6 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { DurableObject } from "cloudflare:workers";
-import { renderUI } from "./ui.js";
+import { renderUI, renderLogin } from "./ui.js";
 import { uploadToDrive } from "./drive.js";
 
 // Durable-Object-backed container that turns a URL into a self-contained,
@@ -57,27 +57,68 @@ function jobStore(env) {
   return env.JOB_STORE.get(env.JOB_STORE.idFromName("jobs"));
 }
 
-const CORS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "POST, OPTIONS",
-  "access-control-allow-headers": "authorization, content-type",
-};
+const COOKIE_NAME = "__Host-rl_session";
+const COOKIE_MAX_AGE = 34560000; // ~400 days, the browser cap; effectively non-expiring.
 
-function authed(req, env) {
-  const header = req.headers.get("authorization") || "";
-  // BASIC_USER/BASIC_PASS must be ASCII: btoa throws on non-Latin1 input.
-  const expected = "Basic " + btoa(`${env.BASIC_USER}:${env.BASIC_PASS}`);
-  if (header.length !== expected.length) return false;
+// Constant-time compare of two strings. The length check leaks length, which is
+// fine for these secrets; the loop keeps the comparison time independent of where
+// the first differing byte is.
+function timingSafeEqual(a, b) {
+  a = String(a);
+  b = String(b);
+  if (a.length !== b.length) return false;
   let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= header.charCodeAt(i) ^ expected.charCodeAt(i);
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
 
-function unauthorized() {
-  return new Response("Authentication required.", {
-    status: 401,
-    headers: { "www-authenticate": 'Basic realm="read-later"' },
-  });
+function parseCookie(header, name) {
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
+  }
+  return null;
+}
+
+// The session cookie simply carries SESSION_SECRET; a request is authenticated
+// when its cookie value constant-time-equals the secret. No signing or embedded
+// expiry: rotating SESSION_SECRET invalidates every outstanding session. Fails
+// closed (unset secret, missing or oversized cookie all read as unauthenticated).
+function verifySession(req, env) {
+  if (!env.SESSION_SECRET) return false;
+  const value = parseCookie(req.headers.get("cookie"), COOKIE_NAME);
+  if (!value || value.length > 512) return false;
+  return timingSafeEqual(value, env.SESSION_SECRET);
+}
+
+function checkPassword(env, pass) {
+  if (!env.LOGIN_PASSWORD) return false;
+  return timingSafeEqual(pass, env.LOGIN_PASSWORD);
+}
+
+// The __Host- prefix forces Secure + Path=/ + no Domain (blocks subdomain cookie
+// injection) and is honored on localhost. SameSite=Lax lets the bookmarklet's
+// top-level GET navigation carry the cookie while withholding it on cross-site
+// POST/subresource requests, which is what keeps the enqueue POST CSRF-safe.
+function sessionCookie(env) {
+  return `${COOKIE_NAME}=${env.SESSION_SECRET}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${COOKIE_MAX_AGE}`;
+}
+
+// Only permit same-origin, absolute-path redirect targets, so a crafted ?next=
+// can't bounce the user off-site (`//evil`, `/\evil`, absolute URLs) or split
+// headers (control chars) after login.
+function safeNext(next) {
+  if (typeof next !== "string" || !next || next.length > 512) return "/";
+  if (next[0] !== "/" || next[1] === "/" || next[1] === "\\") return "/";
+  if (/[\x00-\x1f\x7f]/.test(next)) return "/";
+  return next;
+}
+
+function redirectToLogin(url) {
+  const next = encodeURIComponent(url.pathname + url.search);
+  return new Response(null, { status: 302, headers: { location: `/login?next=${next}` } });
 }
 
 // Reject anything that isn't a plain http(s) URL to a public host, so an enqueued
@@ -133,12 +174,48 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url);
 
-    if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
-    if (!authed(req, env)) return unauthorized();
+    // Login is the only unauthenticated surface.
+    if (url.pathname === "/login") {
+      const htmlHeaders = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+      if (req.method === "GET") {
+        return new Response(renderLogin(url.searchParams.get("next"), null), { headers: htmlHeaders });
+      }
+      if (req.method === "POST") {
+        if (!env.SESSION_SECRET || !env.LOGIN_PASSWORD) {
+          return new Response("Server misconfigured: LOGIN_PASSWORD/SESSION_SECRET unset.", { status: 500 });
+        }
+        const form = await req.formData();
+        const next = form.get("next");
+        if (!checkPassword(env, form.get("password") || "")) {
+          return new Response(renderLogin(next, "Wrong password."), { status: 401, headers: htmlHeaders });
+        }
+        return new Response(null, {
+          status: 303,
+          headers: { location: safeNext(next), "set-cookie": sessionCookie(env) },
+        });
+      }
+      return new Response("Method not allowed", { status: 405 });
+    }
+
+    // Every other route requires a valid session. The API endpoints answer 401 so
+    // the dashboard's own fetches can turn that into a login redirect (a 302 here
+    // would be followed transparently and hand back login HTML); page navigations
+    // bounce straight to login, carrying where they were headed so a pending ?url=
+    // survives the round-trip.
+    if (!verifySession(req, env)) {
+      if (url.pathname === "/jobs" || url.pathname === "/enqueue") {
+        return new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return redirectToLogin(url);
+    }
 
     if (req.method === "GET" && url.pathname === "/") {
-      return new Response(renderUI(req.headers.get("authorization"), url.origin), {
-        headers: { "content-type": "text/html; charset=utf-8" },
+      // Any ?url= is read client-side to pre-fill the form; the server ignores it.
+      return new Response(renderUI(url.origin), {
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
       });
     }
 
@@ -152,21 +229,21 @@ export default {
       if (!isAllowedTarget(target)) {
         return new Response(JSON.stringify({ error: "invalid url" }), {
           status: 400,
-          headers: { ...CORS, "content-type": "application/json" },
+          headers: { "content-type": "application/json" },
         });
       }
       const jobId = crypto.randomUUID();
       await jobStore(env).put({ id: jobId, url: target, state: "queued" });
       await env.QUEUE.send({ url: target, jobId });
       return new Response(JSON.stringify({ ok: true, jobId }), {
-        headers: { ...CORS, "content-type": "application/json" },
+        headers: { "content-type": "application/json" },
       });
     }
 
     if (req.method === "GET" && url.pathname === "/jobs") {
       const jobs = await jobStore(env).list();
       return new Response(JSON.stringify(jobs), {
-        headers: { ...CORS, "content-type": "application/json" },
+        headers: { "content-type": "application/json" },
       });
     }
 

@@ -57,7 +57,7 @@ max_batch_size = 1
 max_batch_timeout = 5
 max_retries = 3
 
-[vars]
-BASIC_USER = "read"
-# Secrets set via `wrangler secret put`: BASIC_PASS, GOOGLE_CLIENT_ID,
-# GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, DRIVE_FOLDER_ID.
+# Secrets set via `wrangler secret bulk .env` (or `wrangler secret put <NAME>`):
+# LOGIN_PASSWORD (typed at /login), SESSION_SECRET (random, stored in the session
+# cookie), GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN,
+# DRIVE_FOLDER_ID.
