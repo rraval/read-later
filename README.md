@@ -73,17 +73,29 @@ app your whole Drive instead of just its own files.
 
 ### 2. Secrets
 
-```sh
-npx wrangler secret put BASIC_PASS
-npx wrangler secret put GOOGLE_CLIENT_ID
-npx wrangler secret put GOOGLE_CLIENT_SECRET
-npx wrangler secret put GOOGLE_REFRESH_TOKEN
-npx wrangler secret put DRIVE_FOLDER_ID
+Put the five secrets in a local `.env` file (dotenv syntax, gitignored). This
+same file feeds the setup scripts above (via direnv/`.envrc`) and `wrangler dev`:
+
+```
+BASIC_PASS="..."
+GOOGLE_CLIENT_ID="..."
+GOOGLE_CLIENT_SECRET="..."
+GOOGLE_REFRESH_TOKEN="..."
+DRIVE_FOLDER_ID="..."
 ```
 
-`BASIC_USER` defaults to `read` in `wrangler.toml`. Use an ASCII-only
-`BASIC_PASS`: the auth check encodes it with `btoa`, which throws on non-Latin1
-characters.
+`wrangler dev` loads `.env` automatically for local runs. Upload all of them to
+the deployed Worker in one shot:
+
+```sh
+npx wrangler secret bulk .env
+```
+
+(Or set them one at a time with `npx wrangler secret put <NAME>`.)
+
+`BASIC_USER` defaults to `read` in `wrangler.toml` (it is a plain var, not a
+secret, so it stays out of `.env`). Use an ASCII-only `BASIC_PASS`: the auth
+check encodes it with `btoa`, which throws on non-Latin1 characters.
 
 ### 3. Deploy
 
