@@ -1,6 +1,6 @@
 # percollate + Chromium. percollate's puppeteer downloads a matching Chromium at
 # npm-install time; we install the shared libraries Chromium needs at runtime.
-FROM node:20-bookworm-slim
+FROM node:24-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates fonts-liberation fonts-noto-color-emoji \
@@ -10,8 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxext6 libxfixes3 libxrandr2 libxkbcommon0 libxshmfence1 xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Install percollate globally; its puppeteer postinstall fetches Chromium.
-RUN npm install -g percollate@^4
+# Install percollate globally (pinned for reproducible image builds); its
+# puppeteer postinstall fetches Chromium.
+RUN npm install -g percollate@4.3.0
 
 WORKDIR /app
 COPY container/server.mjs ./server.mjs

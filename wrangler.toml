@@ -1,24 +1,25 @@
-name = "supernote-read-later"
+name = "read-later"
 main = "src/index.js"
-compatibility_date = "2025-05-01"
+compatibility_date = "2026-07-03"
 compatibility_flags = ["nodejs_compat"]
 
-# percollate container (fetch -> Readability -> images -> EPUB in one shot).
-# Requires Workers Paid. instance_type sets memory; Chromium wants headroom, so
-# use a larger one. Verify the current type names in the Cloudflare docs.
+# Converter container (fetch -> Readability -> images -> EPUB in one shot), run
+# by percollate. Requires Workers Paid. instance_type sets vCPU/memory; Chromium
+# wants headroom, so use standard-1 (4 GiB) and bump to standard-2 (6 GiB) if it
+# OOMs. Single instance is plenty at this scale.
 [[containers]]
-class_name = "Percollate"
+class_name = "Archiver"
 image = "./Dockerfile"
-max_instances = 3
-instance_type = "standard"
+max_instances = 1
+instance_type = "standard-1"
 
 [[durable_objects.bindings]]
-name = "PERCOLLATE"
-class_name = "Percollate"
+name = "ARCHIVER"
+class_name = "Archiver"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["Percollate"]
+new_sqlite_classes = ["Archiver"]
 
 # Queue: the fetch handler enqueues, the same Worker consumes.
 [[queues.producers]]

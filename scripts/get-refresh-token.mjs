@@ -25,6 +25,8 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
   process.exit(1);
 }
 
+// No CSRF `state` param: this is a one-shot flow against a localhost server the
+// user starts themselves, so there's no cross-site request to protect against.
 const authUrl =
   "https://accounts.google.com/o/oauth2/v2/auth?" +
   new URLSearchParams({

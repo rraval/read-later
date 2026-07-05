@@ -1,4 +1,4 @@
-# supernote-read-later
+# read-later
 
 One-click read-later for a Supernote device. Send a URL, get a clean EPUB in a
 Google Drive folder that the Supernote syncs.
@@ -21,7 +21,7 @@ per-run container billing). This design is not free-tier eligible.
 ## Components
 
 - `src/index.js` — Worker: Basic auth, UI, `/enqueue`, queue consumer, and the
-  `Percollate` container class.
+  `Archiver` container class (the URL → document converter).
 - `src/ui.js` — enqueue page + bookmarklet.
 - `src/drive.js` — Google Drive upload.
 - `container/server.mjs` — tiny HTTP server that shells out to percollate.
@@ -68,7 +68,9 @@ npx wrangler secret put GOOGLE_REFRESH_TOKEN
 npx wrangler secret put DRIVE_FOLDER_ID
 ```
 
-`BASIC_USER` defaults to `read` in `wrangler.toml`.
+`BASIC_USER` defaults to `read` in `wrangler.toml`. Use an ASCII-only
+`BASIC_PASS`: the auth check encodes it with `btoa`, which throws on non-Latin1
+characters.
 
 ### 3. Deploy
 

@@ -20,7 +20,9 @@ async function accessToken(env) {
 export async function uploadToDrive(env, name, bytes) {
   const token = await accessToken(env);
   const metadata = { name, parents: [env.DRIVE_FOLDER_ID] };
-  const boundary = "supernote-read-later-boundary";
+  // Random per-upload boundary so it can't collide with a byte sequence that
+  // happens to appear inside the EPUB and corrupt the multipart body.
+  const boundary = "boundary-" + crypto.randomUUID();
 
   const body = new Blob([
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,

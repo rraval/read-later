@@ -16,12 +16,12 @@ export function renderUI(authHeader, origin) {
     JSON.stringify(enqueueUrl) +
     ",{method:'POST',headers:{authorization:" +
     JSON.stringify(authHeader || "") +
-    ",'content-type':'application/json'},body:JSON.stringify({url:location.href})}).then(function(r){alert(r.ok?'Sent to Supernote':'Failed: '+r.status)}).catch(function(e){alert('Error: '+e)})})()";
+    ",'content-type':'application/json'},body:JSON.stringify({url:location.href})}).then(function(r){alert(r.ok?'Sent':'Failed: '+r.status)}).catch(function(e){alert('Error: '+e)})})()";
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Read Later → Supernote</title>
+<title>Read Later</title>
 <style>
   :root { color-scheme: light dark; }
   body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
@@ -34,10 +34,10 @@ export function renderUI(authHeader, origin) {
   code { background: rgba(128,128,128,.2); padding: .1rem .3rem; border-radius: .2rem; }
 </style></head>
 <body>
-  <h1>Read Later → Supernote</h1>
+  <h1>Read Later</h1>
   <form id="f">
     <input type="url" id="u" placeholder="https://example.com/article" required autofocus/>
-    <button type="submit">Send to Supernote</button>
+    <button type="submit">Send</button>
   </form>
   <div id="status" class="muted"></div>
 
@@ -59,7 +59,7 @@ export function renderUI(authHeader, origin) {
           headers: { authorization: AUTH, 'content-type': 'application/json' },
           body: JSON.stringify({ url }),
         });
-        status.textContent = r.ok ? '✓ Queued. It will appear after the next Supernote sync.' : '✗ Failed: ' + r.status;
+        status.textContent = r.ok ? '✓ Queued. It will appear after the next sync.' : '✗ Failed: ' + r.status;
         if (r.ok) document.getElementById('u').value = '';
       } catch (err) {
         status.textContent = '✗ Error: ' + err;
