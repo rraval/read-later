@@ -8,10 +8,10 @@
 // having the app create the folder, the app keeps `drive.file` access to it — and
 // to everything it later uploads inside — so no broad `drive` scope is needed.
 //
-// Usage (needs the same OAuth creds as the token script, plus the refresh token):
-//   GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... GOOGLE_REFRESH_TOKEN=... \
-//     npm run folder            # creates a folder named "ReadLater"
-//   ... npm run folder -- "My Folder Name"   # custom name
+// Usage: needs GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN
+// in .env (direnv loads them into your shell), then:
+//   npm run folder                    # creates a folder named "ReadLater"
+//   npm run folder -- "My Folder Name"  # custom name
 //
 // The folder is created at My Drive root (the app can't set a hand-made folder as
 // its parent — same 404 reason). Move it into your e-reader's synced location in
@@ -24,7 +24,7 @@ const NAME = process.argv[2] || process.env.FOLDER_NAME || "ReadLater";
 
 if (!CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN) {
   console.error(
-    "Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN in the environment."
+    "Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN in .env (loaded by direnv)."
   );
   process.exit(1);
 }
@@ -60,5 +60,6 @@ console.log(`\n=== Created folder "${folder.name}" ===\n${folder.id}\n`);
 console.log("Next:");
 console.log("  1. In the Drive web UI, move this folder into the location your");
 console.log("     e-reader syncs (moving it keeps the app's access).");
-console.log("  2. Store the ID as a Worker secret:");
-console.log("       npx wrangler secret put DRIVE_FOLDER_ID\n");
+console.log('  2. Add its ID to .env:');
+console.log(`       DRIVE_FOLDER_ID="${folder.id}"`);
+console.log("     It uploads to the Worker later via `npx wrangler secret bulk .env`.\n");

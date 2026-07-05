@@ -4,13 +4,15 @@
 // Usage:
 //   1. In Google Cloud console, enable the Drive API and create an OAuth client
 //      of type "Web application" with redirect URI: http://localhost:8976/callback
-//   2. GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=... node scripts/get-refresh-token.mjs
-//   3. Approve in the browser. The refresh token is printed to the terminal.
+//   2. Put GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env (direnv loads them
+//      into your shell), then run: npm run token
+//   3. Approve in the browser, then add the printed refresh token to .env as
+//      GOOGLE_REFRESH_TOKEN.
 //
 // Scope defaults to drive.file (least privilege: only files this app creates).
 // If uploads later fail writing INTO the Supernote folder, re-run with
-//   GOOGLE_SCOPE=https://www.googleapis.com/auth/drive
-// and paste the new refresh token.
+//   GOOGLE_SCOPE=https://www.googleapis.com/auth/drive npm run token
+// and update GOOGLE_REFRESH_TOKEN in .env.
 
 import http from "node:http";
 
@@ -21,7 +23,7 @@ const PORT = 8976;
 const REDIRECT_URI = `http://localhost:${PORT}/callback`;
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
-  console.error("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the environment.");
+  console.error("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env (loaded by direnv).");
   process.exit(1);
 }
 
@@ -65,7 +67,8 @@ const server = http.createServer(async (req, res) => {
   if (data.refresh_token) {
     res.end("Success. Refresh token printed in the terminal. You can close this tab.");
     console.log("\n=== Refresh token ===\n" + data.refresh_token + "\n");
-    console.log("Store it as a Worker secret:\n  npx wrangler secret put GOOGLE_REFRESH_TOKEN\n");
+    console.log('Add it to .env:\n  GOOGLE_REFRESH_TOKEN="' + data.refresh_token + '"\n');
+    console.log("It uploads to the Worker later via `npx wrangler secret bulk .env`.\n");
   } else {
     res.end("No refresh_token returned. Revoke prior access and retry.\n" + JSON.stringify(data));
     console.error("No refresh_token in response:", data);

@@ -32,7 +32,9 @@ per-run container billing). This design is not free-tier eligible.
 
 Prereqs: Node 18+, Docker (for building the container image locally), a
 Cloudflare account on Workers Paid, a Google account whose Drive the Supernote
-syncs.
+syncs, and [direnv](https://direnv.net). The repo ships an `.envrc` that loads a
+local `.env` into your shell; without direnv, run `set -a && source .env && set +a`
+before the setup scripts instead.
 
 ```sh
 npm install
@@ -40,41 +42,67 @@ npx wrangler login
 npx wrangler queues create read-later
 ```
 
+Secrets live in one gitignored `.env` file that you build up over the steps below.
+The same file serves three consumers: `.envrc` loads it for the setup scripts,
+`wrangler dev` reads it for local runs, and `wrangler secret bulk .env` uploads it
+to the deployed Worker. `BASIC_USER` is a plain var in `wrangler.toml`, so it stays
+out of `.env`. direnv reloads `.env` automatically when it changes; run `direnv
+reload` if a script reports a missing variable.
+
 ### 1. Google Drive access
 
 1. Google Cloud console: create a project, enable the Drive API.
 2. Create an OAuth client, type "Web application", redirect URI
-   `http://localhost:8976/callback`. Note the client ID and secret.
-3. Mint a refresh token:
-   ```sh
-   GOOGLE_CLIENT_ID=xxx GOOGLE_CLIENT_SECRET=yyy npm run token
+   `http://localhost:8976/callback`.
+3. Start `.env` with the client credentials, then trust it with direnv:
    ```
-   Open the printed URL, approve, copy the refresh token.
-4. Create the destination folder. The token above uses the least-privilege
-   `drive.file` scope, which only lets the app touch files/folders it creates
-   itself — so the app must create the destination folder, not you by hand (a
-   hand-made folder is invisible to the app and uploads into it 404). Run:
-   ```sh
-   GOOGLE_CLIENT_ID=xxx GOOGLE_CLIENT_SECRET=yyy GOOGLE_REFRESH_TOKEN=zzz \
-     npm run folder            # or: npm run folder -- "My Folder Name"
+   GOOGLE_CLIENT_ID="..."
+   GOOGLE_CLIENT_SECRET="..."
    ```
-   Copy the folder ID it prints — that is your `DRIVE_FOLDER_ID`.
-5. Move the new folder (created at My Drive root) into the location your device
+   ```sh
+   direnv allow
+   ```
+4. Mint a refresh token (it reads the credentials from `.env`):
+   ```sh
+   npm run token
+   ```
+   Approve in the browser, then add the printed token to `.env`:
+   ```
+   GOOGLE_REFRESH_TOKEN="..."
+   ```
+5. Create the destination folder. The least-privilege `drive.file` scope only
+   lets the app touch files/folders it creates itself, so the app must create the
+   folder rather than you making it by hand (a hand-made folder is invisible to
+   the app and uploads into it 404):
+   ```sh
+   npm run folder            # or: npm run folder -- "My Folder Name"
+   ```
+   Add the printed ID to `.env`:
+   ```
+   DRIVE_FOLDER_ID="..."
+   ```
+6. Move the new folder (created at My Drive root) into the location your device
    syncs, e.g. `Supernote/Document/`, using the Drive web UI. Moving it keeps the
    app's access, so uploads keep working. The Supernote then picks up new EPUBs on
    its next Drive sync.
 
-Alternative (skip steps 4–5): if you would rather point at a folder you made by
-hand, re-run the token step with the full-access scope
+Alternative (skip steps 5 and 6): to point at a folder you made by hand, re-run
+the token step with the full-access scope,
 `GOOGLE_SCOPE=https://www.googleapis.com/auth/drive npm run token`, then copy that
-folder's ID straight from its Drive URL
-`https://drive.google.com/drive/folders/<THIS_IS_THE_ID>`. Simpler, but grants the
-app your whole Drive instead of just its own files.
+folder's ID from its Drive URL
+`https://drive.google.com/drive/folders/<THIS_IS_THE_ID>` into `.env`. Simpler,
+but grants the app your whole Drive instead of just its own files.
 
 ### 2. Secrets
 
-Put the five secrets in a local `.env` file (dotenv syntax, gitignored). This
-same file feeds the setup scripts above (via direnv/`.envrc`) and `wrangler dev`:
+Add the final value to `.env`, an ASCII-only Basic-auth password (the auth check
+encodes it with `btoa`, which throws on non-Latin1 characters):
+
+```
+BASIC_PASS="..."
+```
+
+`.env` now holds all five secrets:
 
 ```
 BASIC_PASS="..."
@@ -84,18 +112,15 @@ GOOGLE_REFRESH_TOKEN="..."
 DRIVE_FOLDER_ID="..."
 ```
 
-`wrangler dev` loads `.env` automatically for local runs. Upload all of them to
-the deployed Worker in one shot:
+Upload them to the deployed Worker in one shot (or set them individually with
+`npx wrangler secret put <NAME>`):
 
 ```sh
 npx wrangler secret bulk .env
 ```
 
-(Or set them one at a time with `npx wrangler secret put <NAME>`.)
-
-`BASIC_USER` defaults to `read` in `wrangler.toml` (it is a plain var, not a
-secret, so it stays out of `.env`). Use an ASCII-only `BASIC_PASS`: the auth
-check encodes it with `btoa`, which throws on non-Latin1 characters.
+`wrangler dev` loads the same `.env` automatically for local runs. `BASIC_USER`
+defaults to `read` in `wrangler.toml`.
 
 ### 3. Deploy
 
