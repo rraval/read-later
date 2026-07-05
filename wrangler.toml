@@ -1,0 +1,37 @@
+name = "supernote-read-later"
+main = "src/index.js"
+compatibility_date = "2025-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# percollate container (fetch -> Readability -> images -> EPUB in one shot).
+# Requires Workers Paid. instance_type sets memory; Chromium wants headroom, so
+# use a larger one. Verify the current type names in the Cloudflare docs.
+[[containers]]
+class_name = "Percollate"
+image = "./Dockerfile"
+max_instances = 3
+instance_type = "standard"
+
+[[durable_objects.bindings]]
+name = "PERCOLLATE"
+class_name = "Percollate"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Percollate"]
+
+# Queue: the fetch handler enqueues, the same Worker consumes.
+[[queues.producers]]
+queue = "read-later"
+binding = "QUEUE"
+
+[[queues.consumers]]
+queue = "read-later"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+
+[vars]
+BASIC_USER = "read"
+# Secrets set via `wrangler secret put`: BASIC_PASS, GOOGLE_CLIENT_ID,
+# GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, DRIVE_FOLDER_ID.
