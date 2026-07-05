@@ -3,6 +3,13 @@ main = "src/index.js"
 compatibility_date = "2026-07-03"
 compatibility_flags = ["nodejs_compat"]
 
+[observability]
+enabled = true
+invocation_logs = true
+
+[observability.traces]
+enabled = false
+
 # Converter container (fetch -> Readability -> images -> EPUB in one shot), run
 # by percollate. Requires Workers Paid. instance_type sets vCPU/memory; Chromium
 # wants headroom, so use standard-1 (4 GiB) and bump to standard-2 (6 GiB) if it
