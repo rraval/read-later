@@ -23,9 +23,19 @@ instance_type = "standard-1"
 name = "ARCHIVER"
 class_name = "Archiver"
 
+# Job-status store (see JobStore in src/index.js). A plain SQLite-backed DO, no
+# namespace-create step and no id to manage: provisioned by `wrangler deploy`.
+[[durable_objects.bindings]]
+name = "JOB_STORE"
+class_name = "JobStore"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Archiver"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["JobStore"]
 
 # Queue: the fetch handler enqueues, the same Worker consumes.
 [[queues.producers]]
@@ -34,6 +44,15 @@ binding = "QUEUE"
 
 [[queues.consumers]]
 queue = "read-later"
+max_batch_size = 1
+max_batch_timeout = 5
+max_retries = 3
+# Messages that fail every retry go here instead of being silently deleted; the
+# same Worker consumes the DLQ (see the queue() handler) to record them "failed".
+dead_letter_queue = "read-later-dlq"
+
+[[queues.consumers]]
+queue = "read-later-dlq"
 max_batch_size = 1
 max_batch_timeout = 5
 max_retries = 3

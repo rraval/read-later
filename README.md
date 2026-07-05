@@ -20,8 +20,9 @@ per-run container billing). This design is not free-tier eligible.
 
 ## Components
 
-- `src/index.js` — Worker: Basic auth, UI, `/enqueue`, queue consumer, and the
-  `Archiver` container class (the URL → document converter).
+- `src/index.js` — Worker: Basic auth, UI, `/enqueue`, `/jobs`, queue and
+  dead-letter consumers, the `Archiver` container class (the URL → document
+  converter), and the `JobStore` DO (per-URL job status).
 - `src/ui.js` — enqueue page + bookmarklet.
 - `src/drive.js` — Google Drive upload.
 - `container/server.mjs` — tiny HTTP server that shells out to percollate.
@@ -40,7 +41,11 @@ before the setup scripts instead.
 npm install
 npx wrangler login
 npx wrangler queues create read-later
+npx wrangler queues create read-later-dlq   # dead-letter queue for exhausted retries
 ```
+
+The job-status store is a Durable Object (`JOB_STORE`), so it needs no separate
+create step: `wrangler deploy` provisions it.
 
 Secrets live in one gitignored `.env` file that you build up over the steps below.
 The same file serves three consumers: `.envrc` loads it for the setup scripts,
@@ -148,7 +153,22 @@ Things I could not test without a live deploy; check these once:
   container as a non-root user in the Dockerfile.
 - Watch logs with `npx wrangler tail` while sending a test URL.
 
+## Feedback and reliability
+
+- The page is a live dashboard: a form plus an auto-polling list of recent jobs
+  (`/jobs`) showing each as working, done, skipped, or failed. Polling speeds up
+  while a job is converting, slows when idle, and pauses when the tab is hidden.
+- The bookmarklet opens that dashboard in a new tab and enqueues in the same
+  click, so sends from any site get the same visual feedback. The enqueue rides
+  its own authenticated fetch, so it succeeds even if the new tab has to re-auth.
+- Job state lives in the `JobStore` Durable Object and self-expires after a week.
+- Conversions that fail every retry land on `read-later-dlq` and are recorded as
+  `failed` (with the URL) rather than being silently deleted, so you can re-send.
+
 ## Known limitations
 
-- Paywalled or aggressively JS-gated sites may extract poorly.
-- Failed conversions are retried by the queue, then dropped after 3 tries.
+- Paywalled or aggressively JS-gated sites may extract poorly; these are recorded
+  as `dropped` (permanent) so the dashboard tells you rather than retrying forever.
+- Opening the dashboard tab relies on the browser having cached your Basic-auth
+  credentials for the Worker origin; if not, the new tab prompts once (the article
+  is already queued regardless).

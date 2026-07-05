@@ -1,4 +1,5 @@
 import { Container, getContainer } from "@cloudflare/containers";
+import { DurableObject } from "cloudflare:workers";
 import { renderUI } from "./ui.js";
 import { uploadToDrive } from "./drive.js";
 
@@ -11,6 +12,49 @@ import { uploadToDrive } from "./drive.js";
 export class Archiver extends Container {
   defaultPort = 8080;
   sleepAfter = "10m"; // keep warm briefly so bursts reuse a hot Chromium
+}
+
+// Job status store. A dedicated, tiny SQLite-backed Durable Object (deliberately
+// NOT the Archiver container DO, to keep the container's lifecycle and the
+// converter/status concerns separate). Chosen over KV because it needs no
+// namespace-create step, is strongly consistent (a poll right after enqueue sees
+// the latest write), and reuses infra this Worker already depends on. All jobs
+// live in one singleton instance (see jobStore); single-user volume never
+// outgrows one DO. States: queued -> done | dropped (permanent) | failed (DLQ).
+export class JobStore extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, url TEXT, state TEXT, error TEXT, filename TEXT, ts INTEGER)"
+    );
+  }
+
+  put(job) {
+    // Self-pruning: drop records older than a week on each write so the table
+    // stays tiny without a scheduled job. Cheap at this volume.
+    const now = Date.now();
+    this.sql.exec("DELETE FROM jobs WHERE ts < ?", now - 7 * 24 * 3600 * 1000);
+    this.sql.exec(
+      "INSERT OR REPLACE INTO jobs (id, url, state, error, filename, ts) VALUES (?, ?, ?, ?, ?, ?)",
+      job.id,
+      job.url ?? null,
+      job.state,
+      job.error ?? null,
+      job.filename ?? null,
+      now
+    );
+  }
+
+  list(limit = 25) {
+    return this.sql.exec("SELECT * FROM jobs ORDER BY ts DESC LIMIT ?", limit).toArray();
+  }
+}
+
+// Single shared instance keyed by a fixed name: all job rows live together, and
+// reads/writes serialize through one DO (fine for one low-volume user).
+function jobStore(env) {
+  return env.JOB_STORE.get(env.JOB_STORE.idFromName("jobs"));
 }
 
 const CORS = {
@@ -111,8 +155,17 @@ export default {
           headers: { ...CORS, "content-type": "application/json" },
         });
       }
-      await env.QUEUE.send({ url: target });
-      return new Response(JSON.stringify({ ok: true }), {
+      const jobId = crypto.randomUUID();
+      await jobStore(env).put({ id: jobId, url: target, state: "queued" });
+      await env.QUEUE.send({ url: target, jobId });
+      return new Response(JSON.stringify({ ok: true, jobId }), {
+        headers: { ...CORS, "content-type": "application/json" },
+      });
+    }
+
+    if (req.method === "GET" && url.pathname === "/jobs") {
+      const jobs = await jobStore(env).list();
+      return new Response(JSON.stringify(jobs), {
         headers: { ...CORS, "content-type": "application/json" },
       });
     }
@@ -121,8 +174,22 @@ export default {
   },
 
   async queue(batch, env) {
+    // The DLQ receives only messages that exhausted every retry on the main
+    // queue. Recording them as "failed" (instead of Cloudflare silently deleting
+    // them) is the whole reason the DLQ exists: nothing vanishes, and the URL is
+    // preserved in the job record for a manual re-enqueue.
+    if (batch.queue === "read-later-dlq") {
+      for (const msg of batch.messages) {
+        const { url, jobId } = msg.body;
+        console.error(`dead-letter ${url}: retries exhausted`);
+        await jobStore(env).put({ id: jobId, url, state: "failed", error: "retries exhausted" });
+        msg.ack();
+      }
+      return;
+    }
+
     for (const msg of batch.messages) {
-      const { url } = msg.body;
+      const { url, jobId } = msg.body;
       try {
         console.log(`converting ${url}`);
         const container = getContainer(env.ARCHIVER);
@@ -139,6 +206,7 @@ export default {
           // drop it instead of burning two more container spins on retries.
           if (resp.status >= 400 && resp.status < 500) {
             console.error(`dropping ${url}: convert rejected ${detail}`);
+            await jobStore(env).put({ id: jobId, url, state: "dropped", error: detail });
             msg.ack();
             continue;
           }
@@ -149,8 +217,12 @@ export default {
         const bytes = new Uint8Array(await resp.arrayBuffer());
         const result = await uploadToDrive(env, filename, bytes);
         console.log(`uploaded ${filename} (${bytes.length} bytes) as ${result.id}`);
+        await jobStore(env).put({ id: jobId, url, state: "done", filename });
         msg.ack();
       } catch (err) {
+        // Transient: let the queue retry. Deliberately no status write, so the
+        // record stays "queued" and the UI keeps showing "working". If every
+        // retry fails, the message lands on the DLQ and is marked "failed" there.
         console.error(`failed ${url}: ${err.stack || err}`);
         msg.retry();
       }
