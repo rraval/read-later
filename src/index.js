@@ -11,7 +11,7 @@ import { uploadToDrive, getDriveFile } from "./drive.js";
 // touching this binding or needing a Durable Object migration.
 export class Archiver extends Container {
   defaultPort = 8080;
-  sleepAfter = "10m"; // keep warm briefly so bursts reuse a hot Chromium
+  sleepAfter = "1m"; // keep warm briefly so bursts reuse a hot Chromium
 }
 
 // The app's persistent state: a single, tiny SQLite-backed Durable Object
