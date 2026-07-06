@@ -22,8 +22,8 @@ per-run container billing). This design is not free-tier eligible.
 ## Components
 
 - `src/index.js` — Worker: Google OAuth login (`/auth/login`, `/auth/callback`,
-  `/logout`) + signed-cookie sessions, UI, `/folder`, `/enqueue`, `/jobs`, queue
-  and dead-letter consumers, the `Archiver` container class (the URL → document
+  `/logout`) + signed-cookie sessions, UI, `/folder`, `/enqueue`, `/jobs`, the
+  queue consumer, the `Archiver` container class (the URL → document
   converter), and the `Store` DO (users + per-user job status).
 - `src/ui.js` — sign-in page, dashboard, Drive folder Picker, bookmarklet.
 - `src/drive.js` — Google Drive upload + folder lookup (per-user credentials).
@@ -42,7 +42,6 @@ before the setup scripts instead.
 npm install
 npx wrangler login
 npx wrangler queues create read-later
-npx wrangler queues create read-later-dlq   # dead-letter queue for exhausted retries
 ```
 
 The app-state store is a Durable Object (`STORE`), so it needs no separate create
@@ -144,8 +143,9 @@ Things I could not test without a live deploy; check these once:
   click keeps the enqueue CSRF-safe (there is no side-effecting GET).
 - Job state lives in the `Store` Durable Object (scoped per user) and self-expires
   after a week.
-- Conversions that fail every retry land on `read-later-dlq` and are recorded as
-  `failed` (with the URL) rather than being silently deleted, so you can re-send.
+- Conversions that fail every retry are recorded as `failed` (with the URL and
+  the error) rather than being silently deleted, and each failed or skipped job
+  gets a Retry button that re-enqueues the URL.
 
 ## Known limitations
 

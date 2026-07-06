@@ -55,15 +55,9 @@ binding = "QUEUE"
 queue = "read-later"
 max_batch_size = 1
 max_batch_timeout = 5
-max_retries = 3
-# Messages that fail every retry go here instead of being silently deleted; the
-# same Worker consumes the DLQ (see the queue() handler) to record them "failed".
-dead_letter_queue = "read-later-dlq"
-
-[[queues.consumers]]
-queue = "read-later-dlq"
-max_batch_size = 1
-max_batch_timeout = 5
+# Keep in sync with MAX_DELIVERY_ATTEMPTS in src/index.js (= max_retries + 1).
+# There is no dead-letter queue: the consumer records a job "failed" itself on the
+# final attempt (see the queue() catch block), so this count is load-bearing.
 max_retries = 3
 
 # Secrets/vars set via `wrangler secret bulk .env` (or `wrangler secret put <NAME>`):

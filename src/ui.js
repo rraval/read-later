@@ -255,6 +255,20 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
           err.textContent = String(j.error).slice(0, 200);
           li.append(err);
         }
+        // Failed/dropped jobs are recoverable: a Retry re-enqueues the same URL
+        // (mints a new job; the old row stays until it self-prunes). Disable while
+        // in flight; re-enable if the enqueue didn't take.
+        if (j.state === 'failed' || j.state === 'dropped') {
+          const retry = document.createElement('button');
+          retry.type = 'button';
+          retry.className = 'linkbtn';
+          retry.textContent = 'Retry';
+          retry.addEventListener('click', async () => {
+            retry.disabled = true;
+            if (!(await enqueue(j.url))) retry.disabled = false;
+          });
+          li.append(retry);
+        }
         list.append(li);
       }
     }
@@ -285,33 +299,43 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
     });
 
     let okTimer;
-    f.addEventListener('submit', async (e) => {
-      e.preventDefault();
+    // Shared enqueue path for both the compose form and the per-row Retry button
+    // (retry just re-sends a failed/dropped job's URL — no dedicated endpoint).
+    // Surfaces progress in #status, refreshes the list, and returns true on success.
+    async function enqueue(url) {
       status.classList.remove('ok');
       clearTimeout(okTimer);
-      if (!hasFolder) { status.textContent = 'Choose a Drive folder first.'; return; }
+      if (!hasFolder) { status.textContent = 'Choose a Drive folder first.'; return false; }
       status.textContent = 'Queuing…';
       try {
         const r = await fetch('/enqueue', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ url: input.value }),
+          body: JSON.stringify({ url }),
         });
-        if (r.status === 401) return toLogin();
+        if (r.status === 401) { toLogin(); return false; }
         if (!r.ok) {
           const body = await r.json().catch(() => ({}));
           status.textContent = body.error === 'no folder' ? '✗ Choose a Drive folder first.' : '✗ Failed: ' + r.status;
-          return;
+          return false;
         }
-        input.value = '';
         status.classList.add('ok');
         status.textContent = '✓ Queued';
         okTimer = setTimeout(() => { status.classList.remove('ok'); status.textContent = ''; }, 2500);
-        input.focus();
         await refresh();
         schedule();
+        return true;
       } catch (err) {
         status.textContent = '✗ Error: ' + err;
+        return false;
+      }
+    }
+
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (await enqueue(input.value)) {
+        input.value = '';
+        input.focus();
       }
     });
 

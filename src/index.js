@@ -25,7 +25,7 @@ export class Archiver extends Container {
 //   jobs  — per-URL conversion status, scoped by `owner` (the user's Google sub).
 // Everything lives in one singleton instance (see store()); this low-volume tool
 // never outgrows one DO. Job states: queued -> done | dropped (permanent) |
-// failed (DLQ).
+// failed (transient error that exhausted every retry).
 export class Store extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
@@ -108,6 +108,14 @@ const SESSION_TTL_MS = 30 * 24 * 3600 * 1000; // 30 days; short enough that an
 // allowlist removal takes effect reasonably soon (sessions are stateless, so
 // there is no per-request revocation — see verifySession).
 const STATE_TTL_S = 600; // OAuth round-trip window.
+
+// A queue message is delivered once, then retried up to max_retries times, so the
+// last delivery is attempt (max_retries + 1); msg.attempts starts at 1. There is
+// no dead-letter queue, so the queue() consumer must record the job "failed" on
+// this final attempt before Cloudflare drops the message. MUST equal
+// max_retries + 1 for the "read-later" consumer in wrangler.toml: too high and a
+// truly-exhausted message is silently lost; too low and jobs fail prematurely.
+const MAX_DELIVERY_ATTEMPTS = 4;
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const OAUTH_SCOPES = `openid email profile ${DRIVE_SCOPE}`;
@@ -548,26 +556,6 @@ export default {
   },
 
   async queue(batch, env) {
-    // The DLQ receives only messages that exhausted every retry on the main
-    // queue. Recording them as "failed" (instead of Cloudflare silently deleting
-    // them) is the whole reason the DLQ exists: nothing vanishes, and the URL is
-    // preserved in the job record for a manual re-enqueue.
-    if (batch.queue === "read-later-dlq") {
-      for (const msg of batch.messages) {
-        const { url, jobId, userId } = msg.body;
-        console.error(`dead-letter ${url}: retries exhausted`);
-        await store(env).put({
-          id: jobId,
-          owner: userId,
-          url,
-          state: "failed",
-          error: "retries exhausted",
-        });
-        msg.ack();
-      }
-      return;
-    }
-
     for (const msg of batch.messages) {
       const { url, jobId, userId } = msg.body;
       try {
@@ -618,11 +606,24 @@ export default {
         await store(env).put({ id: jobId, owner: userId, url, state: "done", filename });
         msg.ack();
       } catch (err) {
-        // Transient: let the queue retry. Deliberately no status write, so the
-        // record stays "queued" and the UI keeps showing "working". If every
-        // retry fails, the message lands on the DLQ and is marked "failed" there.
-        console.error(`failed ${url}: ${err.stack || err}`);
-        msg.retry();
+        // No DLQ: on the final delivery, record the real error as "failed" and
+        // ack so Cloudflare doesn't silently drop the message. Earlier attempts
+        // retry with no status write, so the record stays "queued" and the UI
+        // keeps showing "working". The attempt number is logged so an off-by-one
+        // in MAX_DELIVERY_ATTEMPTS is observable in `wrangler tail`.
+        console.error(`failed ${url} (attempt ${msg.attempts}): ${err.stack || err}`);
+        if (msg.attempts >= MAX_DELIVERY_ATTEMPTS) {
+          await store(env).put({
+            id: jobId,
+            owner: userId,
+            url,
+            state: "failed",
+            error: String(err.message || err).slice(0, 500),
+          });
+          msg.ack();
+        } else {
+          msg.retry();
+        }
       }
     }
   },
