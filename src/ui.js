@@ -23,20 +23,31 @@ function page(title, body, head = "") {
   body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
   h1 { font-size: 1.4rem; }
   h2 { font-size: 1.1rem; margin-top: 2rem; }
-  input[type=url] { width: 100%; padding: .6rem; font-size: 1rem; box-sizing: border-box; }
-  button { padding: .6rem 1rem; font-size: 1rem; margin-top: .6rem; cursor: pointer; }
+  input[type=url] { width: 100%; padding: .6rem; font-size: 1rem; box-sizing: border-box; border: 1px solid rgba(128,128,128,.5); border-radius: .4rem; }
+  button { padding: .6rem 1rem; font-size: 1rem; cursor: pointer; border: 1px solid currentColor; border-radius: .4rem; background: transparent; color: inherit; }
   button:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { border: none; background: #2563eb; color: #fff; font-weight: 600; }
+  .btn-primary:disabled { background: #2563eb; }
   a.btn { display: inline-block; padding: .6rem 1rem; border: 1px solid currentColor; border-radius: .4rem; text-decoration: none; margin-top: .6rem; }
-  .bm { display: inline-block; padding: .4rem .8rem; border: 1px solid currentColor; border-radius: .4rem; text-decoration: none; }
+  .bm { text-decoration: underline; }
   .muted { opacity: .7; font-size: .9rem; }
   .alert { color: #d33; margin-top: .6rem; }
-  .topbar { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+  .topbar { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 1.5rem; }
+  .compose { display: flex; gap: .5rem; flex-wrap: wrap; }
+  .compose input[type=url] { flex: 1; min-width: 12rem; }
+  .compose button { white-space: nowrap; }
   #status { margin-top: .6rem; min-height: 1.2rem; }
+  #status.ok { color: #16a34a; opacity: 1; }
+  .setup { padding: 1rem; margin-bottom: 1.5rem; border: 1px solid rgba(128,128,128,.4); border-radius: .5rem; background: rgba(37,99,235,.06); }
+  .setup p { margin: 0 0 .6rem; }
   ul#jobs { list-style: none; padding: 0; margin: .5rem 0; }
   ul#jobs li { padding: .6rem 0; border-top: 1px solid rgba(128,128,128,.25); }
   .row { display: flex; justify-content: space-between; gap: 1rem; }
   .url { word-break: break-all; }
   .err { white-space: pre-wrap; word-break: break-word; margin-top: .2rem; }
+  .foot { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid rgba(128,128,128,.25); }
+  .foot p { margin: .4rem 0; }
+  .linkbtn { background: none; border: none; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
 </style>${head}</head>
 <body>
 ${body}
@@ -82,25 +93,28 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
     "Read Later",
     `  <div class="topbar"><h1>Read Later</h1><a class="muted" href="/logout">Sign out</a></div>
 
-  <h2>Drive folder</h2>
-  <p id="folder" class="muted">${
-    folderName ? "Saving to: " + esc(folderName) : "No folder chosen yet."
-  }</p>
-  <button type="button" id="choose">Choose folder…</button>
+  <div id="setup" class="setup"${folderName ? " hidden" : ""}>
+    <p>Choose a Google Drive folder to start saving articles. Your EPUBs land there and your e-reader syncs them.</p>
+    <button type="button" id="choose">Choose folder…</button>
+  </div>
 
-  <h2>Send an article</h2>
-  <form id="f">
-    <input type="url" id="u" placeholder="https://example.com/article" required/>
-    <button type="submit" id="send"${folderName ? "" : " disabled"}>Send</button>
+  <form id="f" class="compose">
+    <input type="url" id="u" placeholder="Paste an article URL…" required autofocus/>
+    <button type="submit" id="send" class="btn-primary"${folderName ? "" : " disabled"}>Send</button>
   </form>
-  <div id="status" class="muted">${folderName ? "" : "Choose a Drive folder first."}</div>
+  <div id="status"></div>
 
   <h2>Recent</h2>
   <ul id="jobs"><li class="muted">Loading…</li></ul>
 
-  <h2>Bookmarklet</h2>
-  <p class="muted">Drag this to your bookmarks bar, then click it on any page to open a pre-filled form:</p>
-  <p><a class="bm" href="${esc(bookmarklet)}">📖 Read Later</a></p>
+  <div class="foot muted">
+    <p id="folder">${
+      folderName
+        ? '📁 Saving to ' + esc(folderName) + ' · <button type="button" id="change" class="linkbtn">Change folder</button>'
+        : '📁 No Drive folder chosen yet.'
+    }</p>
+    <p>Or drag <a class="bm" href="${esc(bookmarklet)}">📖 Read Later</a> to your bookmarks bar to save any page in one click.</p>
+  </div>
 
   <script>
     ${cfg}
@@ -110,8 +124,20 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
     const status = document.getElementById('status');
     const list = document.getElementById('jobs');
     const folderEl = document.getElementById('folder');
-    const chooseBtn = document.getElementById('choose');
+    const setupEl = document.getElementById('setup');
     let hasFolder = ${folderName ? "true" : "false"};
+
+    // Render the footer folder line. Built with textContent for the (untrusted)
+    // folder name, plus a "Change folder" button that re-opens the Picker.
+    function setFolderLine(name) {
+      folderEl.textContent = '📁 Saving to ' + name + ' · ';
+      const change = document.createElement('button');
+      change.type = 'button';
+      change.className = 'linkbtn';
+      change.textContent = 'Change folder';
+      change.addEventListener('click', pickFolder);
+      folderEl.append(change);
+    }
 
     const LABEL = {
       queued: ['⏳', 'Working…'],
@@ -179,18 +205,23 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
         if (r.status === 401) return toLogin();
         const body = await r.json().catch(() => ({}));
         if (!r.ok) { folderEl.textContent = '✗ ' + (body.error || 'could not save folder'); return; }
-        folderEl.textContent = 'Saving to: ' + (body.name || doc.name || 'folder');
+        setFolderLine(body.name || doc.name || 'folder');
         hasFolder = true;
         send.disabled = false;
-        if (status.textContent === 'Choose a Drive folder first.') status.textContent = '';
+        setupEl.hidden = true;
+        input.focus();
       } catch (err) {
         folderEl.textContent = '✗ Error: ' + err;
       }
     }
-    chooseBtn.addEventListener('click', () => {
+    // Open the Drive Picker. Wired to the first-run setup button and the footer's
+    // "Change folder" button, so both entry points share one code path.
+    function pickFolder() {
       if (!ensureTokenClient()) { folderEl.textContent = 'Google not loaded yet — try again in a moment.'; return; }
       tokenClient.requestAccessToken();
-    });
+    }
+    document.getElementById('choose').addEventListener('click', pickFolder);
+    document.querySelectorAll('#change').forEach((b) => b.addEventListener('click', pickFolder));
 
     // Build the list with textContent only: job URLs and percollate error text
     // are untrusted, so never route them through innerHTML.
@@ -253,8 +284,11 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
       if (!document.hidden) { refresh().then(schedule); }
     });
 
+    let okTimer;
     f.addEventListener('submit', async (e) => {
       e.preventDefault();
+      status.classList.remove('ok');
+      clearTimeout(okTimer);
       if (!hasFolder) { status.textContent = 'Choose a Drive folder first.'; return; }
       status.textContent = 'Queuing…';
       try {
@@ -270,7 +304,10 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
           return;
         }
         input.value = '';
-        status.textContent = '';
+        status.classList.add('ok');
+        status.textContent = '✓ Queued';
+        okTimer = setTimeout(() => { status.classList.remove('ok'); status.textContent = ''; }, 2500);
+        input.focus();
         await refresh();
         schedule();
       } catch (err) {
