@@ -1,18 +1,19 @@
 // The app UI: a login page and, for an authenticated session, the dashboard.
-// Auth is a session cookie, so no credentials live in the page: the form's fetch
-// and the /jobs polling are same-origin and ride the cookie automatically. The
-// dashboard shows a live list of recent jobs (all states), which for a low-volume
-// single-user tool is more useful than a one-shot per-job status page. A
-// drag-to-bookmarks bookmarklet opens the dashboard with the current URL
-// pre-filled into the form; the user clicks Send to enqueue (an explicit
+// Login is "Sign in with Google" (OAuth); the session is a signed cookie, so no
+// credentials live in the page and the form's fetch and /jobs polling are
+// same-origin and ride the cookie automatically. The dashboard shows a live list
+// of recent jobs (all states), a Drive-folder picker (each user chooses where
+// their EPUBs land), and a drag-to-bookmarks bookmarklet that opens the dashboard
+// with the current URL pre-filled; the user clicks Send to enqueue (an explicit
 // same-origin POST, which is what keeps it CSRF-safe).
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
 }
 
-// Shared page chrome so the dashboard and login look like one app.
-function page(title, body) {
+// Shared page chrome so the dashboard and login look like one app. `head` allows
+// extra tags (e.g. loading Google's Picker scripts on the dashboard only).
+function page(title, body, head = "") {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -22,39 +23,40 @@ function page(title, body) {
   body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
   h1 { font-size: 1.4rem; }
   h2 { font-size: 1.1rem; margin-top: 2rem; }
-  input[type=url], input[type=password] { width: 100%; padding: .6rem; font-size: 1rem; box-sizing: border-box; }
+  input[type=url] { width: 100%; padding: .6rem; font-size: 1rem; box-sizing: border-box; }
   button { padding: .6rem 1rem; font-size: 1rem; margin-top: .6rem; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  a.btn { display: inline-block; padding: .6rem 1rem; border: 1px solid currentColor; border-radius: .4rem; text-decoration: none; margin-top: .6rem; }
   .bm { display: inline-block; padding: .4rem .8rem; border: 1px solid currentColor; border-radius: .4rem; text-decoration: none; }
   .muted { opacity: .7; font-size: .9rem; }
   .alert { color: #d33; margin-top: .6rem; }
+  .topbar { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
   #status { margin-top: .6rem; min-height: 1.2rem; }
   ul#jobs { list-style: none; padding: 0; margin: .5rem 0; }
   ul#jobs li { padding: .6rem 0; border-top: 1px solid rgba(128,128,128,.25); }
   .row { display: flex; justify-content: space-between; gap: 1rem; }
   .url { word-break: break-all; }
   .err { white-space: pre-wrap; word-break: break-word; margin-top: .2rem; }
-</style></head>
+</style>${head}</head>
 <body>
 ${body}
 </body></html>`;
 }
 
-// Password-only login. Rendered unauthenticated with no job data. `next` is
-// reflected into a hidden field, so it must be escaped (the server also validates
-// it with safeNext on submit).
-export function renderLogin(next, error) {
+// "Sign in with Google" login. Rendered unauthenticated with no user data. `next`
+// (where to land after login) is carried on the sign-in link and validated
+// server-side with safeNext.
+export function renderLogin(next) {
+  const href = "/auth/login" + (next ? "?next=" + encodeURIComponent(next) : "");
   return page(
-    "Read Later — Log in",
+    "Read Later — Sign in",
     `  <h1>Read Later</h1>
-  <form method="POST" action="/login">
-    <input type="hidden" name="next" value="${esc(next || "/")}"/>
-    <input type="password" name="password" placeholder="Password" autofocus required/>
-    <button type="submit">Log in</button>
-  </form>${error ? `\n  <p class="alert">${esc(error)}</p>` : ""}`
+  <p class="muted">Sign in with the Google account whose Drive should receive your articles.</p>
+  <p><a class="btn" href="${esc(href)}">Sign in with Google</a></p>`
   );
 }
 
-export function renderUI(origin) {
+export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
   // Bookmarklet: open this dashboard in a new tab with the current page's URL in
   // the query string, so the form arrives pre-filled. No fetch and no baked-in
   // credential; the enqueue is an explicit same-origin POST the user triggers by
@@ -65,14 +67,33 @@ export function renderUI(origin) {
     JSON.stringify(origin + "/?url=") +
     "+encodeURIComponent(location.href),'_blank')";
 
+  // Config the in-browser Picker needs. These are exposed to the page by design
+  // (the OAuth client id, the referrer-restricted API key, and the numeric app
+  // id). JSON.stringify keeps them safely quoted inside the inline script.
+  const cfg = `const CLIENT_ID=${JSON.stringify(clientId || "")},API_KEY=${JSON.stringify(
+    apiKey || ""
+  )},APP_ID=${JSON.stringify(appId || "")};`;
+
+  const head =
+    '\n<script src="https://apis.google.com/js/api.js" async defer></script>' +
+    '\n<script src="https://accounts.google.com/gsi/client" async defer></script>';
+
   return page(
     "Read Later",
-    `  <h1>Read Later</h1>
+    `  <div class="topbar"><h1>Read Later</h1><a class="muted" href="/logout">Sign out</a></div>
+
+  <h2>Drive folder</h2>
+  <p id="folder" class="muted">${
+    folderName ? "Saving to: " + esc(folderName) : "No folder chosen yet."
+  }</p>
+  <button type="button" id="choose">Choose folder…</button>
+
+  <h2>Send an article</h2>
   <form id="f">
-    <input type="url" id="u" placeholder="https://example.com/article" required autofocus/>
-    <button type="submit" id="send">Send</button>
+    <input type="url" id="u" placeholder="https://example.com/article" required/>
+    <button type="submit" id="send"${folderName ? "" : " disabled"}>Send</button>
   </form>
-  <div id="status" class="muted"></div>
+  <div id="status" class="muted">${folderName ? "" : "Choose a Drive folder first."}</div>
 
   <h2>Recent</h2>
   <ul id="jobs"><li class="muted">Loading…</li></ul>
@@ -82,11 +103,15 @@ export function renderUI(origin) {
   <p><a class="bm" href="${esc(bookmarklet)}">📖 Read Later</a></p>
 
   <script>
+    ${cfg}
     const f = document.getElementById('f');
     const input = document.getElementById('u');
     const send = document.getElementById('send');
     const status = document.getElementById('status');
     const list = document.getElementById('jobs');
+    const folderEl = document.getElementById('folder');
+    const chooseBtn = document.getElementById('choose');
+    let hasFolder = ${folderName ? "true" : "false"};
 
     const LABEL = {
       queued: ['⏳', 'Working…'],
@@ -108,6 +133,64 @@ export function renderUI(origin) {
     function toLogin() {
       location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
     }
+
+    // --- Drive folder Picker ---
+    // A fresh drive.file access token is minted in the browser via Google Identity
+    // Services, so the long-lived refresh token never touches the page. The picked
+    // folder is POSTed to /folder, where the server verifies its own refresh token
+    // can see it before storing it.
+    let tokenClient = null;
+    function ensureTokenClient() {
+      if (tokenClient) return true;
+      if (!(window.google && google.accounts && google.accounts.oauth2)) return false;
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: 'https://www.googleapis.com/auth/drive.file',
+        callback: (resp) => { if (resp && resp.access_token) openPicker(resp.access_token); },
+      });
+      return true;
+    }
+    function openPicker(accessToken) {
+      gapi.load('picker', () => {
+        const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+          .setSelectFolderEnabled(true)
+          .setMimeTypes('application/vnd.google-apps.folder');
+        const picker = new google.picker.PickerBuilder()
+          .setAppId(APP_ID)
+          .setOAuthToken(accessToken)
+          .setDeveloperKey(API_KEY)
+          .addView(view)
+          .setCallback(onPicked)
+          .build();
+        picker.setVisible(true);
+      });
+    }
+    async function onPicked(data) {
+      if (!(window.google && google.picker) || data.action !== google.picker.Action.PICKED) return;
+      const doc = data.docs && data.docs[0];
+      if (!doc) return;
+      folderEl.textContent = 'Saving folder…';
+      try {
+        const r = await fetch('/folder', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ folderId: doc.id }),
+        });
+        if (r.status === 401) return toLogin();
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) { folderEl.textContent = '✗ ' + (body.error || 'could not save folder'); return; }
+        folderEl.textContent = 'Saving to: ' + (body.name || doc.name || 'folder');
+        hasFolder = true;
+        send.disabled = false;
+        if (status.textContent === 'Choose a Drive folder first.') status.textContent = '';
+      } catch (err) {
+        folderEl.textContent = '✗ Error: ' + err;
+      }
+    }
+    chooseBtn.addEventListener('click', () => {
+      if (!ensureTokenClient()) { folderEl.textContent = 'Google not loaded yet — try again in a moment.'; return; }
+      tokenClient.requestAccessToken();
+    });
 
     // Build the list with textContent only: job URLs and percollate error text
     // are untrusted, so never route them through innerHTML.
@@ -155,7 +238,7 @@ export function renderUI(origin) {
     }
 
     // Poll fast while something is converting, slowly when everything is settled,
-    // and not at all while the tab is hidden, to keep the job-store reads minimal.
+    // and not at all while the tab is hidden, to keep the store reads minimal.
     const anyActive = () => jobs.some((j) => j.state === 'queued');
     let timer;
     function schedule() {
@@ -172,6 +255,7 @@ export function renderUI(origin) {
 
     f.addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (!hasFolder) { status.textContent = 'Choose a Drive folder first.'; return; }
       status.textContent = 'Queuing…';
       try {
         const r = await fetch('/enqueue', {
@@ -180,7 +264,11 @@ export function renderUI(origin) {
           body: JSON.stringify({ url: input.value }),
         });
         if (r.status === 401) return toLogin();
-        if (!r.ok) { status.textContent = '✗ Failed: ' + r.status; return; }
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          status.textContent = body.error === 'no folder' ? '✗ Choose a Drive folder first.' : '✗ Failed: ' + r.status;
+          return;
+        }
         input.value = '';
         status.textContent = '';
         await refresh();
@@ -201,6 +289,7 @@ export function renderUI(origin) {
     }
 
     refresh().then(schedule);
-  </script>`
+  </script>`,
+    head
   );
 }

@@ -23,11 +23,12 @@ instance_type = "standard-1"
 name = "ARCHIVER"
 class_name = "Archiver"
 
-# Job-status store (see JobStore in src/index.js). A plain SQLite-backed DO, no
+# App state store (see Store in src/index.js): users (encrypted Drive refresh
+# tokens + chosen folder) and per-user job status. A plain SQLite-backed DO, no
 # namespace-create step and no id to manage: provisioned by `wrangler deploy`.
 [[durable_objects.bindings]]
-name = "JOB_STORE"
-class_name = "JobStore"
+name = "STORE"
+class_name = "Store"
 
 [[migrations]]
 tag = "v1"
@@ -36,6 +37,14 @@ new_sqlite_classes = ["Archiver"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["JobStore"]
+
+# v3 renames JobStore -> Store (a fresh SQLite class; the old ephemeral job rows,
+# which self-prune after 7 days, are not migrated). Going multi-user adds no new
+# Durable Objects: Store just gains a users table alongside jobs.
+[[migrations]]
+tag = "v3"
+deleted_classes = ["JobStore"]
+new_sqlite_classes = ["Store"]
 
 # Queue: the fetch handler enqueues, the same Worker consumes.
 [[queues.producers]]
@@ -57,7 +66,9 @@ max_batch_size = 1
 max_batch_timeout = 5
 max_retries = 3
 
-# Secrets set via `wrangler secret bulk .env` (or `wrangler secret put <NAME>`):
-# LOGIN_PASSWORD (typed at /login), SESSION_SECRET (random, stored in the session
-# cookie), GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN,
-# DRIVE_FOLDER_ID.
+# Secrets/vars set via `wrangler secret bulk .env` (or `wrangler secret put <NAME>`):
+# SESSION_SECRET (random; signs the session cookie and derives the refresh-token
+# encryption key), GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (shared OAuth client),
+# ALLOWED_EMAILS (comma-separated login allowlist), GOOGLE_API_KEY (referrer-
+# restricted Picker developer key), GOOGLE_PROJECT_NUMBER (Picker appId). Per-user
+# Drive refresh tokens and folder are stored in the Store DO, not here.

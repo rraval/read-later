@@ -1,12 +1,13 @@
 # read-later
 
-One-click read-later for a Supernote device. Send a URL, get a clean EPUB in a
-Google Drive folder that the Supernote syncs.
+One-click read-later. Send a URL, get a clean EPUB in a Google Drive folder that
+an e-reader (e.g. a Supernote) syncs. Multi-user: each person signs in with
+Google and picks their own destination folder.
 
 Flow: UI or bookmarklet → Cloudflare Worker (`/enqueue`) → Cloudflare Queue →
 consumer calls a Cloudflare Container running **percollate**, which fetches the
-page, runs Readability, embeds images, and builds the EPUB → Worker uploads it
-to your `Supernote/Document/...` Drive folder.
+page, runs Readability, embeds images, and builds the EPUB → Worker uploads it to
+the signed-in user's chosen Drive folder using their own credentials.
 
 ## Why this design
 
@@ -20,15 +21,14 @@ per-run container billing). This design is not free-tier eligible.
 
 ## Components
 
-- `src/index.js` — Worker: cookie-session auth + `/login`, UI, `/enqueue`,
-  `/jobs`, queue and
-  dead-letter consumers, the `Archiver` container class (the URL → document
-  converter), and the `JobStore` DO (per-URL job status).
-- `src/ui.js` — enqueue page + bookmarklet.
-- `src/drive.js` — Google Drive upload.
+- `src/index.js` — Worker: Google OAuth login (`/auth/login`, `/auth/callback`,
+  `/logout`) + signed-cookie sessions, UI, `/folder`, `/enqueue`, `/jobs`, queue
+  and dead-letter consumers, the `Archiver` container class (the URL → document
+  converter), and the `Store` DO (users + per-user job status).
+- `src/ui.js` — sign-in page, dashboard, Drive folder Picker, bookmarklet.
+- `src/drive.js` — Google Drive upload + folder lookup (per-user credentials).
 - `container/server.mjs` — tiny HTTP server that shells out to percollate.
 - `Dockerfile` — percollate + Chromium runtime.
-- `scripts/get-refresh-token.mjs` — one-time Google OAuth helper.
 
 ## Setup
 
@@ -45,8 +45,8 @@ npx wrangler queues create read-later
 npx wrangler queues create read-later-dlq   # dead-letter queue for exhausted retries
 ```
 
-The job-status store is a Durable Object (`JOB_STORE`), so it needs no separate
-create step: `wrangler deploy` provisions it.
+The app-state store is a Durable Object (`STORE`), so it needs no separate create
+step: `wrangler deploy` provisions it.
 
 Secrets live in one gitignored `.env` file that you build up over the steps below.
 The same file serves three consumers: `.envrc` loads it for the setup scripts,
@@ -54,74 +54,52 @@ The same file serves three consumers: `.envrc` loads it for the setup scripts,
 to the deployed Worker. direnv reloads `.env` automatically when it changes; run
 `direnv reload` if a script reports a missing variable.
 
-### 1. Google Drive access
+### 1. Google Cloud project
 
-1. Google Cloud console: create a project, enable the Drive API.
-2. Create an OAuth client, type "Web application", redirect URI
-   `http://localhost:8976/callback`.
-3. Start `.env` with the client credentials, then trust it with direnv:
+Users sign in with Google; the app stores each user's Drive `drive.file` refresh
+token (encrypted) and the folder they pick via the Google Picker. Access is
+gated by an email allowlist.
+
+1. Google Cloud console: create a project, and enable both the **Google Drive
+   API** and the **Google Picker API** (two separate toggles).
+2. OAuth consent screen: set the user type to External and add your app's brand
+   details. Add the scopes `openid`, `email`, `profile`, and
+   `.../auth/drive.file`. These are non-sensitive, so this needs only basic
+   OAuth App Verification, not the restricted-scope CASA security assessment.
+3. Publish the consent screen to **Production** (do not leave it in Testing). In
+   Testing, Google expires each user's refresh token 7 days after consent, which
+   would break background uploads. Production has no such expiry. Access is
+   controlled by `ALLOWED_EMAILS` (below), not by the publishing status.
+4. Create an OAuth client, type "Web application":
+   - Authorized JavaScript origins: `http://localhost:8787` (wrangler dev) and
+     `https://<your-worker>.workers.dev`.
+   - Authorized redirect URIs: `http://localhost:8787/auth/callback` and
+     `https://<your-worker>.workers.dev/auth/callback`.
+   Put the credentials in `.env`:
    ```
    GOOGLE_CLIENT_ID="..."
    GOOGLE_CLIENT_SECRET="..."
    ```
-   ```sh
-   direnv allow
-   ```
-4. Mint a refresh token (it reads the credentials from `.env`):
-   ```sh
-   npm run token
-   ```
-   Approve in the browser, then add the printed token to `.env`:
-   ```
-   GOOGLE_REFRESH_TOKEN="..."
-   ```
-5. Create the destination folder. The least-privilege `drive.file` scope only
-   lets the app touch files/folders it creates itself, so the app must create the
-   folder rather than you making it by hand (a hand-made folder is invisible to
-   the app and uploads into it 404):
-   ```sh
-   npm run folder            # or: npm run folder -- "My Folder Name"
-   ```
-   Add the printed ID to `.env`:
-   ```
-   DRIVE_FOLDER_ID="..."
-   ```
-6. Move the new folder (created at My Drive root) into the location your device
-   syncs, e.g. `Supernote/Document/`, using the Drive web UI. Moving it keeps the
-   app's access, so uploads keep working. The Supernote then picks up new EPUBs on
-   its next Drive sync.
+5. Create an API key (Credentials → Create → API key). Restrict it to the Google
+   Picker API and, under Application restrictions, to your Worker's HTTP
+   referrers. This is the Picker developer key.
+6. Note the project number (Cloud console dashboard, or the numeric prefix of the
+   client id). It is the Picker `appId`.
 
-Alternative (skip steps 5 and 6): to point at a folder you made by hand, re-run
-the token step with the full-access scope,
-`GOOGLE_SCOPE=https://www.googleapis.com/auth/drive npm run token`, then copy that
-folder's ID from its Drive URL
-`https://drive.google.com/drive/folders/<THIS_IS_THE_ID>` into `.env`. Simpler,
-but grants the app your whole Drive instead of just its own files.
+### 2. Secrets and vars
 
-### 2. Secrets
-
-Add two auth values to `.env`: `LOGIN_PASSWORD`, the password you type on the
-`/login` page, and `SESSION_SECRET`, a random token stored in the session cookie
-(rotating it logs every session out). Generate the secret with:
-
-```sh
-openssl rand -hex 32
-```
+Everything the Worker needs lives in one gitignored `.env`. `SESSION_SECRET`
+signs the session cookie and derives the key that encrypts stored refresh
+tokens; generate it with `openssl rand -hex 32`. `ALLOWED_EMAILS` is a
+comma-separated list of the Google accounts allowed to sign in.
 
 ```
-LOGIN_PASSWORD="..."
-SESSION_SECRET="..."
-```
-
-`.env` now holds all six secrets:
-
-```
-LOGIN_PASSWORD="..."
-SESSION_SECRET="..."
+SESSION_SECRET="..."           # openssl rand -hex 32
 GOOGLE_CLIENT_ID="..."
 GOOGLE_CLIENT_SECRET="..."
-GOOGLE_REFRESH_TOKEN="..."
-DRIVE_FOLDER_ID="..."
+ALLOWED_EMAILS="alice@gmail.com,bob@gmail.com"
+GOOGLE_API_KEY="..."           # Picker developer key from step 5
+GOOGLE_PROJECT_NUMBER="..."    # Picker appId from step 6
 ```
 
 Upload them to the deployed Worker in one shot (or set them individually with
@@ -139,8 +117,10 @@ npx wrangler secret bulk .env
 npm run deploy   # builds the Docker image, pushes it, deploys the Worker
 ```
 
-Open `https://<your-worker>.workers.dev/`, log in with your `LOGIN_PASSWORD`. Use
-the form or drag the bookmarklet to your bookmarks bar.
+Open `https://<your-worker>.workers.dev/`, sign in with Google (an allowlisted
+account), click "Choose folder…" to pick your Drive destination, then use the
+form or drag the bookmarklet to your bookmarks bar. Each user picks their own
+folder and their EPUBs upload there.
 
 ## Verify on first deploy
 
@@ -162,7 +142,8 @@ Things I could not test without a live deploy; check these once:
   the form; you click Send to enqueue (a same-origin POST), and the list refreshes
   in place, so the job is visible with no manual refresh. Requiring the explicit
   click keeps the enqueue CSRF-safe (there is no side-effecting GET).
-- Job state lives in the `JobStore` Durable Object and self-expires after a week.
+- Job state lives in the `Store` Durable Object (scoped per user) and self-expires
+  after a week.
 - Conversions that fail every retry land on `read-later-dlq` and are recorded as
   `failed` (with the URL) rather than being silently deleted, so you can re-send.
 
@@ -171,8 +152,10 @@ Things I could not test without a live deploy; check these once:
 - Paywalled or aggressively JS-gated sites may extract poorly; these are recorded
   as `dropped` (permanent) so the dashboard tells you rather than retrying forever.
 - A logged-out bookmarklet click routes through `/login` first; the URL is
-  preserved in the `next` parameter, so after logging in you land on the pre-filled
-  form and can Send as usual.
+  preserved in the `next` parameter (carried through the Google round-trip), so
+  after signing in you land on the pre-filled form and can Send as usual.
+- New users must click "Choose folder…" once before sending; the Send button is
+  disabled until a Drive folder is stored.
 - In local `wrangler dev`, open the app on `localhost` or `127.0.0.1`. The session
   cookie is `Secure` (and `__Host-` prefixed); browsers drop such cookies on other
   http hostnames (a LAN IP, a custom name), which shows up as a login loop.
