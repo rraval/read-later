@@ -1,6 +1,7 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { DurableObject } from "cloudflare:workers";
-import { renderUI, renderLogin } from "./ui.js";
+import { renderUI, renderLogin, renderPrivacy, renderTerms } from "./ui.js";
+import { LOGO_SVG } from "./assets.js";
 import { uploadToDrive, getDriveFile } from "./drive.js";
 
 // Durable-Object-backed container that turns a URL into a self-contained,
@@ -396,6 +397,31 @@ export default {
 
     if (path === "/login" && req.method === "GET") {
       return new Response(renderLogin(url.searchParams.get("next")), { headers: HTML_HEADERS });
+    }
+
+    // Public legal pages and brand mark. Kept before the session gate so Google's
+    // OAuth consent screen and logged-out visitors can reach them.
+    if (path === "/privacy" && req.method === "GET") {
+      return new Response(renderPrivacy(), { headers: HTML_HEADERS });
+    }
+
+    if (path === "/terms" && req.method === "GET") {
+      return new Response(renderTerms(), { headers: HTML_HEADERS });
+    }
+
+    if (path === "/favicon.svg" && req.method === "GET") {
+      return new Response(LOGO_SVG, {
+        headers: {
+          "content-type": "image/svg+xml",
+          "cache-control": "public, max-age=86400, immutable",
+        },
+      });
+    }
+
+    // Browsers still probe /favicon.ico; answer empty so it doesn't bounce to
+    // /login. The real icon is declared via <link rel="icon"> to /favicon.svg.
+    if (path === "/favicon.ico") {
+      return new Response(null, { status: 204 });
     }
 
     if (path === "/logout") {

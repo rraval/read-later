@@ -4,6 +4,7 @@
   "description": "One-click read-later: URL -> clean EPUB (percollate container) -> Google Drive folder synced by an e-reader",
   "type": "module",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

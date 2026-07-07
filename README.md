@@ -159,3 +159,14 @@ Things I could not test without a live deploy; check these once:
 - In local `wrangler dev`, open the app on `localhost` or `127.0.0.1`. The session
   cookie is `Secure` (and `__Host-` prefixed); browsers drop such cookies on other
   http hostnames (a LAN IP, a custom name), which shows up as a login loop.
+
+## Legal pages
+
+The Worker serves a Privacy Policy at `/privacy` and Terms of Use at `/terms`
+(both public, no sign-in needed). Point the Google OAuth consent screen's privacy
+policy link at `https://<your-worker>.workers.dev/privacy`. The favicon and brand
+mark are a single SVG served at `/favicon.svg` (`src/assets.js`).
+
+## License
+
+MIT — see [LICENSE](LICENSE). Provided as-is, best effort, with no warranty.

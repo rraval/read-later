@@ -7,8 +7,20 @@
 // with the current URL pre-filled; the user clicks Send to enqueue (an explicit
 // same-origin POST, which is what keeps it CSRF-safe).
 
+import { LOGO_SVG } from "./assets.js";
+
+// Where "Source" in the footer and the legal pages point people for questions,
+// deletion requests, and the code itself.
+const REPO_URL = "https://github.com/rraval/read-later";
+
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
+}
+
+// The wordmark: the bookmark logo inlined next to "Read Later". Used in the h1 on
+// every page so the brand and the tab favicon (also LOGO_SVG) match.
+function brand() {
+  return `<span class="brand">${LOGO_SVG}Read Later</span>`;
 }
 
 // Shared page chrome so the dashboard and login look like one app. `head` allows
@@ -17,6 +29,7 @@ function page(title, body, head = "") {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
 <title>${title}</title>
 <style>
   :root { color-scheme: light dark; }
@@ -48,9 +61,19 @@ function page(title, body, head = "") {
   .foot { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid rgba(128,128,128,.25); }
   .foot p { margin: .4rem 0; }
   .linkbtn { background: none; border: none; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
+  .brand { display: inline-flex; align-items: center; gap: .5rem; }
+  .brand svg { width: 1.25em; height: 1.25em; flex: none; }
+  .site-foot { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid rgba(128,128,128,.25); text-align: center; font-size: .85rem; opacity: .7; }
+  .site-foot a { color: inherit; }
+  .legal { max-width: 40rem; }
+  .legal h2 { margin-top: 1.8rem; }
+  .legal p, .legal li { margin: .6rem 0; }
 </style>${head}</head>
 <body>
 ${body}
+  <footer class="site-foot">
+    <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="${REPO_URL}" target="_blank" rel="noopener">Source</a>
+  </footer>
 </body></html>`;
 }
 
@@ -61,7 +84,7 @@ export function renderLogin(next) {
   const href = "/auth/login" + (next ? "?next=" + encodeURIComponent(next) : "");
   return page(
     "Read Later — Sign in",
-    `  <h1>Read Later</h1>
+    `  <h1>${brand()}</h1>
   <p class="muted">Sign in with the Google account whose Drive should receive your articles.</p>
   <p><a class="btn" href="${esc(href)}">Sign in with Google</a></p>`
   );
@@ -91,7 +114,7 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
 
   return page(
     "Read Later",
-    `  <div class="topbar"><h1>Read Later</h1><a class="muted" href="/logout">Sign out</a></div>
+    `  <div class="topbar"><h1>${brand()}</h1><a class="muted" href="/logout">Sign out</a></div>
 
   <div id="setup" class="setup"${folderName ? " hidden" : ""}>
     <p>Choose a Google Drive folder to start saving articles. Your EPUBs land there and your e-reader syncs them.</p>
@@ -352,5 +375,127 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
     refresh().then(schedule);
   </script>`,
     head
+  );
+}
+
+// Static Privacy Policy. Reachable without a session (Google's OAuth consent
+// screen links here, and the footer links here from every page). The text
+// describes what the reference deployment actually does; keep it in sync with
+// the data the Worker and Store DO handle if that changes.
+export function renderPrivacy() {
+  return page(
+    "Read Later — Privacy",
+    `  <h1>${brand()}</h1>
+  <div class="legal">
+  <h2>Privacy Policy</h2>
+  <p class="muted">Last updated 7 July 2026</p>
+
+  <p>Read Later is a free, open-source, self-hostable tool. This policy describes
+  the reference deployment. If you run your own instance, you are the operator of
+  that instance and responsible for its data. The software is provided as-is (see
+  the <a href="/terms">Terms</a>).</p>
+
+  <h2>What we store</h2>
+  <ul>
+    <li><strong>Your Google identity.</strong> When you sign in with Google we
+    store your Google account identifier and email address (and whether Google
+    reports it as verified). These are used only to sign you in and to check you
+    against the access allowlist.</li>
+    <li><strong>A Google Drive token.</strong> We store a Google Drive refresh
+    token limited to the <code>drive.file</code> scope — it can only touch files
+    and folders this app creates or that you explicitly pick. It is stored
+    encrypted at rest and is used to upload your EPUBs to the folder you choose.</li>
+    <li><strong>Your chosen folder.</strong> The id and name of the Google Drive
+    folder you select as the upload destination.</li>
+    <li><strong>Your recent jobs.</strong> For each article you submit we store
+    the URL, its processing state, the resulting filename, and any error message.
+    These rows live in per-user storage and are automatically deleted after about
+    one week.</li>
+    <li><strong>A session cookie.</strong> A signed, <code>Secure</code>,
+    <code>HttpOnly</code>, <code>__Host-</code>-prefixed cookie keeps you logged
+    in. There are no analytics, no advertising, and no third-party tracking
+    cookies.</li>
+  </ul>
+
+  <h2>Who processes the data</h2>
+  <p>To provide the service, data is processed by:</p>
+  <ul>
+    <li><strong>Cloudflare</strong> — hosting, the job queue, storage, and the
+    container that converts pages into EPUBs. The application runs entirely on
+    Cloudflare's platform.</li>
+    <li><strong>Google</strong> — sign-in (OAuth) and the Drive API used to
+    upload your files.</li>
+    <li><strong>The website you submit</strong> — the converter fetches each URL
+    you send directly from its origin server to build the EPUB.</li>
+  </ul>
+  <p>Data is not sold, rented, or shared beyond what is needed to run the service.</p>
+
+  <h2>Your controls</h2>
+  <ul>
+    <li>You can revoke this app's access to your Google account at any time from
+    your <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google
+    Account permissions</a>.</li>
+    <li>Signing out clears your session. Your job history deletes itself after
+    about a week.</li>
+    <li>The EPUBs live in your own Google Drive and remain under your control.</li>
+    <li>For deletion requests or questions, open an issue at
+    <a href="${REPO_URL}" target="_blank" rel="noopener">${esc(REPO_URL)}</a>.</li>
+  </ul>
+
+  <p class="muted">This service is not directed to children.</p>
+  </div>`
+  );
+}
+
+// Static Terms of Use. Best-effort, minimal-warranty framing to match the
+// free/libre spirit of the project. Reachable without a session; linked from the
+// footer of every page.
+export function renderTerms() {
+  return page(
+    "Read Later — Terms",
+    `  <h1>${brand()}</h1>
+  <div class="legal">
+  <h2>Terms of Use</h2>
+  <p class="muted">Last updated 7 July 2026</p>
+
+  <p>Read Later converts web article URLs into EPUB files and uploads them to a
+  Google Drive folder you choose. Access to the hosted instance is limited to
+  allowlisted accounts and intended for personal use. By using it you agree to
+  these terms.</p>
+
+  <h2>Acceptable use</h2>
+  <ul>
+    <li>Only submit URLs you are entitled to access.</li>
+    <li>Respect copyright and the terms of the websites you convert. You are
+    responsible for the content you process and for how you use the resulting
+    files.</li>
+    <li>Do not use the service to infringe others' rights or to place undue load
+    on any website.</li>
+  </ul>
+
+  <h2>Open source</h2>
+  <p>The software is open source, licensed under the MIT License. You are free to
+  read, run, modify, and self-host it. The source and license are at
+  <a href="${REPO_URL}" target="_blank" rel="noopener">${esc(REPO_URL)}</a>.
+  These terms govern use of this hosted instance, not the software itself.</p>
+
+  <h2>No warranty</h2>
+  <p>The service is provided "as is" and "as available", on a best-effort basis,
+  without warranties of any kind, express or implied. There is no guarantee of
+  availability, of the accuracy or completeness of conversions, or of data
+  retention. The service may change, break, or be discontinued at any time
+  without notice.</p>
+
+  <h2>Limitation of liability</h2>
+  <p>To the maximum extent permitted by law, the operator and contributors are not
+  liable for any damages arising from your use of the service, including lost or
+  corrupted data or failed or inaccurate conversions.</p>
+
+  <h2>Third-party services</h2>
+  <p>Your use also depends on and is subject to the terms of Google and Cloudflare.</p>
+
+  <h2>Contact</h2>
+  <p>Questions and reports: <a href="${REPO_URL}" target="_blank" rel="noopener">${esc(REPO_URL)}</a>.</p>
+  </div>`
   );
 }
