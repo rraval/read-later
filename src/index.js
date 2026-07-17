@@ -1,6 +1,6 @@
 import { Container, getContainer } from "@cloudflare/containers";
 import { DurableObject } from "cloudflare:workers";
-import { renderUI, renderLogin, renderPrivacy, renderTerms } from "./ui.js";
+import { renderUI, renderLanding, renderPrivacy, renderTerms } from "./ui.js";
 import { LOGO_SVG } from "./assets.js";
 import { uploadToDrive, getDriveFile } from "./drive.js";
 
@@ -396,7 +396,7 @@ export default {
     // --- Unauthenticated surfaces: the login page and the OAuth round-trip. ---
 
     if (path === "/login" && req.method === "GET") {
-      return new Response(renderLogin(url.searchParams.get("next")), { headers: HTML_HEADERS });
+      return new Response(renderLanding(url.searchParams.get("next")), { headers: HTML_HEADERS });
     }
 
     // Public legal pages and brand mark. Kept before the session gate so Google's
@@ -503,6 +503,14 @@ export default {
     if (!userId) {
       if (path === "/jobs" || path === "/enqueue" || path === "/folder") {
         return json({ error: "unauthorized" }, 401);
+      }
+      // Serve the home page itself (not a redirect) at "/" so Google's OAuth
+      // branding verifier finds a real page stating the app's purpose at the
+      // exact home-page URL. Carry any ?url= (from the bookmarklet) through login
+      // so a logged-out save still lands back on a pre-filled dashboard.
+      if (req.method === "GET" && path === "/") {
+        const next = url.search ? "/" + url.search : "";
+        return new Response(renderLanding(next), { headers: HTML_HEADERS });
       }
       return redirectToLogin(url);
     }

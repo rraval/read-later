@@ -77,16 +77,35 @@ ${body}
 </body></html>`;
 }
 
-// "Sign in with Google" login. Rendered unauthenticated with no user data. `next`
-// (where to land after login) is carried on the sign-in link and validated
-// server-side with safeNext.
-export function renderLogin(next) {
+// The public landing page, served at both "/" (for logged-out visitors) and
+// "/login". It doubles as the app's home page for Google's OAuth branding
+// verification, so it must state the app's purpose and show the "Read Later"
+// name that matches the OAuth consent screen. Rendered unauthenticated with no
+// user data. `next` (where to land after login) is carried on the sign-in link
+// and validated server-side with safeNext.
+export function renderLanding(next) {
   const href = "/auth/login" + (next ? "?next=" + encodeURIComponent(next) : "");
   return page(
-    "Read Later — Sign in",
+    "Read Later — Save web articles to your e-reader",
     `  <h1>${brand()}</h1>
-  <p class="muted">Sign in with the Google account whose Drive should receive your articles.</p>
-  <p><a class="btn" href="${esc(href)}">Sign in with Google</a></p>`
+  <p>Read Later turns any web article into a clean, clutter-free EPUB and saves it
+  to a Google Drive folder you choose, so your e-reader can sync it and you can read
+  it later, offline, on a proper screen.</p>
+
+  <h2>How it works</h2>
+  <ul>
+    <li>Paste an article URL, or use the one-click bookmarklet from any page.</li>
+    <li>Read Later fetches the page, strips out ads and navigation, and builds a
+    readable EPUB.</li>
+    <li>The EPUB lands in the Google Drive folder you pick; your e-reader syncs
+    that folder and the article is waiting for you.</li>
+  </ul>
+
+  <p class="muted">Read Later only touches the Drive files and folder you choose
+  (the <code>drive.file</code> scope), and it is free and open source.</p>
+
+  <p><a class="btn" href="${esc(href)}">Sign in with Google</a></p>
+  <p class="muted">Sign in with the Google account whose Drive should receive your articles.</p>`
   );
 }
 
