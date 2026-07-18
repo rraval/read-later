@@ -45,7 +45,11 @@ function page(title, body, head = "") {
   .bm { text-decoration: underline; }
   .muted { opacity: .7; font-size: .9rem; }
   .alert { color: #d33; margin-top: .6rem; }
-  .topbar { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; margin-bottom: 1.5rem; }
+  h1 a.bm { color: inherit; text-decoration: none; cursor: grab; }
+  h1:has(a.bm) { display: flex; align-items: center; gap: .5rem; }
+  .drag-hint { font-weight: 400; font-size: .8rem; }
+  .actionbar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: -.5rem 0 1.5rem; }
+  .actionbar a { color: inherit; }
   .compose { display: flex; gap: .5rem; flex-wrap: wrap; }
   .compose input[type=url] { flex: 1; min-width: 12rem; }
   .compose button { white-space: nowrap; }
@@ -58,8 +62,6 @@ function page(title, body, head = "") {
   .row { display: flex; justify-content: space-between; gap: 1rem; }
   .url { word-break: break-all; }
   .err { white-space: pre-wrap; word-break: break-word; margin-top: .2rem; }
-  .foot { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid rgba(128,128,128,.25); }
-  .foot p { margin: .4rem 0; }
   .linkbtn { background: none; border: none; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
   .brand { display: inline-flex; align-items: center; gap: .5rem; }
   .brand svg { width: 1.25em; height: 1.25em; flex: none; }
@@ -133,7 +135,16 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
 
   return page(
     "Read Later",
-    `  <div class="topbar"><h1>${brand()}</h1><a class="muted" href="/logout">Sign out</a></div>
+    `  <h1><a class="bm" id="bm" href="${esc(bookmarklet)}" title="Drag me to your bookmarks bar to save any page in one click">${brand()}</a> <span class="drag-hint muted">← drag to bookmarks</span></h1>
+  <p id="bm-note" class="muted" hidden>This is a bookmarklet — <strong>drag</strong> the “Read Later” title up to your bookmarks bar. Then, on any page you want to read later, click it to send the article here.</p>
+  <div class="actionbar muted">
+    <span id="folder">${
+      folderName
+        ? '📁 Saving to ' + esc(folderName) + ' · <button type="button" id="change" class="linkbtn">Change folder</button>'
+        : '📁 No Drive folder chosen yet.'
+    }</span>
+    <a href="/logout">Sign out</a>
+  </div>
 
   <div id="setup" class="setup"${folderName ? " hidden" : ""}>
     <p>Choose a Google Drive folder to start saving articles. Your EPUBs land there and your e-reader syncs them.</p>
@@ -149,15 +160,6 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
   <h2>Recent</h2>
   <ul id="jobs"><li class="muted">Loading…</li></ul>
 
-  <div class="foot muted">
-    <p id="folder">${
-      folderName
-        ? '📁 Saving to ' + esc(folderName) + ' · <button type="button" id="change" class="linkbtn">Change folder</button>'
-        : '📁 No Drive folder chosen yet.'
-    }</p>
-    <p>Or drag <a class="bm" href="${esc(bookmarklet)}">📖 Read Later</a> to your bookmarks bar to save any page in one click.</p>
-  </div>
-
   <script>
     ${cfg}
     const f = document.getElementById('f');
@@ -169,7 +171,15 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
     const setupEl = document.getElementById('setup');
     let hasFolder = ${folderName ? "true" : "false"};
 
-    // Render the footer folder line. Built with textContent for the (untrusted)
+    // Clicking the title runs the bookmarklet against this very page, which is
+    // never what someone wants here. Intercept the click and explain that it's
+    // meant to be dragged to the bookmarks bar instead.
+    document.getElementById('bm').addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById('bm-note').hidden = false;
+    });
+
+    // Render the action-bar folder line. Built with textContent for the (untrusted)
     // folder name, plus a "Change folder" button that re-opens the Picker.
     function setFolderLine(name) {
       folderEl.textContent = '📁 Saving to ' + name + ' · ';
@@ -256,8 +266,8 @@ export function renderUI({ origin, clientId, apiKey, appId, folderName }) {
         folderEl.textContent = '✗ Error: ' + err;
       }
     }
-    // Open the Drive Picker. Wired to the first-run setup button and the footer's
-    // "Change folder" button, so both entry points share one code path.
+    // Open the Drive Picker. Wired to the first-run setup button and the action
+    // bar's "Change folder" button, so both entry points share one code path.
     function pickFolder() {
       if (!ensureTokenClient()) { folderEl.textContent = 'Google not loaded yet — try again in a moment.'; return; }
       tokenClient.requestAccessToken();
