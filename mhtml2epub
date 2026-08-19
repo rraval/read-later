@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Convert a Chrome "Save Page As → Webpage, Single File" capture (.mhtml) into
+# an EPUB locally, using the same container image the deployed pipeline runs.
+# For pages the crawler can't fetch (logins, paywalls): save the page in
+# Chrome, then:
+#
+#   ./mhtml2epub page.mhtml
+#
+# The EPUB, named after the article title, lands next to the input file; drop
+# it into your Drive folder to sync it to your e-reader.
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+  echo "usage: $0 <page.mhtml>" >&2
+  exit 2
+fi
+
+input=$1
+if [ ! -f "$input" ]; then
+  echo "no such file: $input" >&2
+  exit 1
+fi
+dir=$(cd "$(dirname "$input")" && pwd)
+base=$(basename "$input")
+repo=$(cd "$(dirname "$0")" && pwd)
+
+# Cheap when the image is cached; only the input file's directory is mounted.
+docker build -t read-later-converter "$repo"
+exec docker run --rm -v "$dir:/work" read-later-converter \
+  node convert-mhtml.mjs "/work/$base" /work

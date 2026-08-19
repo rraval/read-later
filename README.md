@@ -29,6 +29,8 @@ eligible.
 - `src/drive.js` — Drive upload and folder lookup, per-user credentials.
 - `container/server.mjs`, `Dockerfile` — HTTP server plus the percollate +
   Chromium runtime it shells out to.
+- `container/mhtml.mjs`, `container/convert-mhtml.mjs`, `mhtml2epub` — local
+  MHTML-to-EPUB conversion for pages the crawler can't fetch (see below).
 
 ## Setup
 
@@ -129,10 +131,26 @@ in place. Job state lives per-user in the `Store` Durable Object and expires
 after a week. Jobs that fail every retry are kept, with the URL and error, and
 get a Retry button rather than being dropped silently.
 
+## Saving pages that need your login
+
+The crawler can't fetch pages behind authentication (paywalls, internal tools).
+For those, capture the page in your browser and convert it locally with Docker:
+
+1. In Chrome, ⌘S (Save Page As) → format "Webpage, Single File" → a `.mhtml`
+   file containing the rendered page plus its images.
+2. `./mhtml2epub page.mhtml` — builds the same container image the deployed
+   pipeline uses and runs percollate on the capture. The EPUB, named after the
+   article title, lands next to the input file.
+3. Put the EPUB in your Drive folder yourself (drag into drive.google.com or a
+   synced folder); this path doesn't touch the Worker or your credentials.
+
+Unit tests for the MHTML parser run on the host: `node --test container/mhtml.test.mjs`.
+
 ## Known limitations
 
 - Paywalled or JS-heavy sites may extract poorly; these are recorded as `dropped`
-  so the dashboard tells you rather than retrying forever.
+  so the dashboard tells you rather than retrying forever. For pages that need a
+  login, use the local `./mhtml2epub` flow above.
 - New users must pick a Drive folder once before the Send button enables.
 - For local `wrangler dev`, open the app on `localhost` or `127.0.0.1`: the
   session cookie is `Secure` and `__Host-` prefixed, so browsers drop it on other

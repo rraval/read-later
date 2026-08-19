@@ -16,7 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g percollate@4.3.0
 
 WORKDIR /app
-COPY container/server.mjs ./server.mjs
+# server.mjs is the deployed converter; mhtml.mjs + convert-mhtml.mjs power the
+# local ./mhtml2epub wrapper (tests stay out of the image).
+COPY container/server.mjs container/mhtml.mjs container/convert-mhtml.mjs ./
 
 EXPOSE 8080
 
